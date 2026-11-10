@@ -30,7 +30,7 @@ Each crate has one job. The crates that end up in a ROM stay free of dependencie
 
 - `crates/regs` (`gba-sdk-regs`): typed, volatile access to memory-mapped registers and memory. `Reg<T>` is one cell with `read` and `write`; `Block<T, N>` is a run of them (`get`, `fill`). Holds the register constants (`DISPCNT`, `VCOUNT`, `KEYINPUT`, `IME`, `MODE3_FRAME` and `MODE3_FRAME_WORDS`) and mGBA's debug registers under `mgba`. The constants over VRAM are `u16` or `u32`, since VRAM, palette RAM and OAM mishandle byte writes; `Block<u8, _>` exists only for mGBA's string buffer, so never make one over hardware memory. No policy.
 - `crates/rt` (`gba-sdk-rt`): what every ROM links. `src/crt0.s` is the ROM header and startup (gas, ARM mode): the IRQ, SVC and user stacks, `.data` copied from ROM to IWRAM, `.bss` zeroed, then `bx` to `main`. `gba.ld` is the linker script: `.data` takes `.iwram*` input sections so `#[link_section = ".iwram"]` code lands in IWRAM, and the IWRAM region stops 2K short of the user stack so an oversized `.data` or `.bss` fails at link time. `src/lib.rs` has `entry!` (defines the exported `main`), the `log!` macro and `MgbaLog` over mGBA's debug registers, and the panic handler, which logs at `Fatal` and loops. Planned here: the interrupt trampoline, BIOS calls and the memory functions.
-- `crates/sdk` (`gba-sdk`): the API games use. Today `video` (`Color`, `Mode3`, `wait_for_vblank`, which polls `VCOUNT`) and `input` (`Button`, `Buttons`). Re-exports `regs`, `entry!`, `log!` and `LogLevel`. It has `extern crate gba_sdk_rt` so the panic handler is always linked. Planned: sound, timers, DMA, interrupts, saves, fixed-point math.
+- `crates/sdk` (`gba-sdk`): the API games use. Today `video` (`Color`, `Mode3`, `wait_for_vblank`, which polls `VCOUNT`) and `input` (`Button`, `Buttons`). Re-exports `regs`, `entry!`, `log!` and `LogLevel`. It has `extern crate gba_sdk_rt` so the panic handler is always linked. Planned: interrupts, DMA, a frame loop, button edges, sprites, tiled backgrounds, typed asset handles, text, fixed-point and vector math, collision, a 2D camera, mode 4 shapes, windows and blending, timers, sound, saves. `docs/gba/roadmap.md` has the full list.
 - `examples/hello`: the smallest ROM, mode 3 with a color that changes while A is held. It logs `hello from gba-sdk`, which `just test` looks for, so it doubles as the boot test.
 - `tools/run-rom.sh`: runs a ROM headless in mGBA and saves the log next to it, deleting any old log first. It fails if the log can't be written, if mGBA exits or is killed before the time is up (a SIGKILL only counts as the timeout once the full time has passed), or if the log lacks an expected line. A crash inside the emulated ROM doesn't exit mGBA, so that only shows up as a missing line. `just test` calls it.
 - `target/roms/`: built `.gba` files and their mGBA logs (ignored by git).
@@ -86,7 +86,7 @@ This `justfile` is the root's `gba` module, so from the root these are `just gba
 - `just rom <name>`: builds one ROM with the native backend into `target/roms/<name>.gba` (`agb-gbafix` reads the ELF and writes the fixed ROM in one step) and prints its section sizes. Planned: `just rom-c <name>` through mrustc.
 - `just test [name] [expect]`: builds the ROM and runs `tools/run-rom.sh`, which runs it for four seconds in headless mGBA and greps its log for `expect` (default: hello's line). In the script, `timeout` is mGBA's direct parent with `-k` because mGBA ignores SIGTERM, and `stdbuf -oL` keeps the log flowing through the pipe; without both it hangs. Planned: every test ROM on both backends.
 - `just run <name>`: builds remotely through the root's `remote` recipe, fetches the ROM, opens it in local `mgba-qt`.
-- Planned: `just compare` for ROM size and cycle counts per backend.
+- Planned: `just compare` for ROM size and cycle counts per backend, and `just test-host` for the host `cargo test` of pure logic such as fixed-point math.
 
 ### Testing
 
@@ -125,16 +125,18 @@ Read from mrustc's source as of 2026-11 and not yet tested on this project. The 
 
 ## Suggested build order
 
-Prove the riskiest assumption first, then build outward. Each milestone ends with ROMs that pass on every backend that's still in play.
+Prove the riskiest assumption first, then build outward. Each milestone ends with ROMs that pass on every backend in play: native always, mrustc once the spike says go. After a no-go, mrustc stays experimental and the "both backends" requirements mean native only. The numbers match `docs/gba/roadmap.md`. Its checklists are the full list and the summaries here are the outline, so a change to one goes into the other.
 
-1. **Spike, the go/no-go for mrustc.** The smallest possible ROM (mode 3, fill the screen, read a key) with `rt`'s startup and linker script, on native first: done, that is `examples/hello`. Then build `core` 1.90 with mrustc for the custom target and get the same ROM to boot in mGBA. Confirm `arm-none-eabi-gcc -mthumb -mcpu=arm7tdmi` finds a suitable libgcc multilib. Record ROM size and frame cost for both. **Go** if the ROM boots and the size and speed are in a usable range. **No-go** means mrustc stays marked experimental and the native SDK carries on.
-2. **Foundations.** `regs`, the test runner, debug output, interrupts and `VBlankIntrWait`, panics on screen and in the log. CI from here on.
-3. **Graphics.** Tiled backgrounds, sprites, palettes, windows and blending, DMA, and the asset converter for images.
-4. **Game loop essentials.** Input, timers, fixed-point math, an optional allocator over EWRAM, saves (SRAM first, then flash and EEPROM).
-5. **Sound.** Direct Sound with a mixer in IWRAM, then the PSG channels. This is the heaviest test of the IWRAM and ARM-mode story.
-6. **Docs and a real game.** A small complete game in `examples/`, built on both backends, as the proof that the API holds up.
+The API aims to feel like a small raylib: a frame loop, `draw_sprite` and `draw_text` calls every frame, converted assets behind typed handles, and math types for movement and collision. Drawing goes through the sprite and tile hardware, not pixels, since clearing the mode 3 frame buffer alone costs about half a frame. Games write a RAM copy of OAM and the frame loop copies it over in the vertical blank.
 
-CI (planned) runs on GitHub Actions without the build server: `just check` and `just test` for native on every push, with the mrustc build cached by its pinned commit. Reach for it after milestone 1, once there's something to protect.
+- **Milestone 0: the spike, the go/no-go for mrustc.** The smallest possible ROM (mode 3, fill the screen, read a key) with `rt`'s startup and linker script, on native first: done, that is `examples/hello`. Then build `core` 1.90 with mrustc for the custom target and get the same ROM to boot in mGBA. Confirm `arm-none-eabi-gcc -mthumb -mcpu=arm7tdmi` finds a suitable libgcc multilib. Record ROM size and frame cost for both. **Go** if the ROM boots and the size and speed are in a usable range. **No-go** means mrustc stays marked experimental and the native SDK carries on. The rest of the spike runs alongside milestone 1, since native never waits on mrustc.
+- **Milestone 1: foundations.** The test runner, interrupts and `VBlankIntrWait`, DMA, the frame loop (sleeping until the vertical blank, a frame counter, a queue of copies that milestone 2 fills), button edges, fixed-point math with the first host tests, a `log!` that is safe to interrupt, panics on screen and in the log, memory functions in `rt`, and a test that `.iwram` functions really are in IWRAM. CI from here on.
+- **Milestone 2: graphics.** Sprites through the RAM copy of OAM, tiled backgrounds with scrolling and streaming of big maps, palettes, a VRAM allocator with typed asset handles, a built-in text font, the asset converter for images and Tiled maps (its output 4-byte aligned for DMA), and frame comparisons against goldens. It ends with a small game (Breakout or similar) in `examples/`, so the API gets a user early.
+- **Milestone 3: game loop essentials.** `Vec2`, `Rect` and collision, a sine table and an RNG, a 2D camera, mode 4 shape drawing, windows and blending, timers, an optional allocator over EWRAM.
+- **Milestone 4: sound and saves.** PSG sound effects, then Direct Sound with a mixer in IWRAM and WAV conversion, which is the heaviest test of the IWRAM and ARM-mode story, then music. Saves: SRAM first, then flash and EEPROM.
+- **Milestone 5: a real game.** A small complete game in `examples/`, built on both backends, as the proof that the API holds up. Then `cargo gba-sdk`, publishing, and a hardware run.
+
+CI (planned) runs on GitHub Actions without the build server: `just check` and `just test` for native on every push. It belongs to milestone 1, once there's something to protect. The mrustc build joins it after a go, cached by its pinned commit.
 
 ## Code Quality
 
@@ -144,7 +146,7 @@ On top of the root's rules:
 - No floats in the SDK. They run in software and they're slow. Use fixed point.
 - Mind the 32-bit target: `usize` is 32 bits, 64-bit math is slow, and integer division calls a helper. Prefer shifts in hot paths.
 - Keep ROM and IWRAM use in mind. Generics and `core::fmt` pull in a lot of code, so check `just compare` when adding either to a common path.
-- A dependency for a ROM crate has to build under mrustc, so test that before adding it.
+- While mrustc is in play, a dependency for a ROM crate has to build under it. Once mrustc can build a ROM, test a dependency there before adding it. Until then, avoid one where you can, and if native work needs one first, note it for the spike to check. After a no-go this rule lapses.
 
 Existing crates ([agb](https://github.com/agbrs/agb), [gba](https://github.com/rust-console/gba)) are useful references, especially for hardware quirks. We don't depend on them, since neither targets mrustc and both assume nightly features. Check the license before copying code. The name `gba` on crates.io belongs to that second crate, so ours is `gba-sdk`.
 
