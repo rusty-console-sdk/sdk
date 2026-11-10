@@ -34,7 +34,7 @@ fn main() -> ! {
 
 - **A ROM that boots.** [The runtime](runtime.md) holds the header, startup and linker script, so a game is a function. `entry!` names it.
 - **Typed hardware access.** Registers are `Reg<u16>` or `Reg<u32>` with volatile reads and writes, never references, so the compiler can't reorder or elide them. Byte writes, which VRAM, palette RAM and OAM mishandle, don't exist for those regions.
-- **An API that grows by hardware area.** [Video](video.md) and [input](input.md) today; sound, timers, DMA, interrupts and saves follow the [roadmap](roadmap.md).
+- **An API that grows by hardware area.** [Video](video.md) and [input](input.md) today. The [roadmap](roadmap.md) builds toward something like a small raylib: a frame loop, sprites, tiled backgrounds, text, converted assets, fixed-point math and collision, then sound and saves.
 - **[Logging](logging.md) through mGBA**, and panics that land in the same log.
 - **Two backends, one source.** The native backend is `rustc`. A second one through [mrustc](https://github.com/thepowersgang/mrustc), which emits C for `arm-none-eabi-gcc`, is planned; see [Backends](backends.md).
 
