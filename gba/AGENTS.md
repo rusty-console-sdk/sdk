@@ -146,7 +146,7 @@ On top of the root's rules:
 - No floats in the SDK. They run in software and they're slow. Use fixed point.
 - Mind the 32-bit target: `usize` is 32 bits, 64-bit math is slow, and integer division calls a helper. Prefer shifts in hot paths.
 - Keep ROM and IWRAM use in mind. Generics and `core::fmt` pull in a lot of code, so check `just compare` when adding either to a common path.
-- A dependency for a ROM crate has to build under mrustc, so test that before adding it.
+- While mrustc is in play, a dependency for a ROM crate has to build under it. Once mrustc can build a ROM, test a dependency there before adding it. Until then, avoid one where you can, and if native work needs one first, note it for the spike to check. After a no-go this rule lapses.
 
 Existing crates ([agb](https://github.com/agbrs/agb), [gba](https://github.com/rust-console/gba)) are useful references, especially for hardware quirks. We don't depend on them, since neither targets mrustc and both assume nightly features. Check the license before copying code. The name `gba` on crates.io belongs to that second crate, so ours is `gba-sdk`.
 

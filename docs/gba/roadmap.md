@@ -35,7 +35,7 @@ The goal is an SDK that feels like a small [raylib](https://www.raylib.com): a f
 - [ ] Palettes, with changes queued for the frame loop.
 - [ ] A VRAM allocator for tiles and palette banks, so loading art returns a typed handle and games never pick tile indices by hand.
 - [ ] Text: a built-in 8 by 8 font on its own background layer, `draw_text`, and a writer that works with `write!`.
-- [ ] The asset converter: PNG images to tiles and palettes, and maps from the Tiled editor to tilemaps. A `macro_rules!` macro wraps the output of `include_bytes!` in a typed handle inside a `#[repr(align(4))]` wrapper, since DMA and the halfword and word copies to VRAM need aligned sources.
+- [ ] The asset converter: PNGs to tiles and palettes, and maps from the Tiled editor to tilemaps. A `macro_rules!` macro copies the bytes from `include_bytes!` into a static of a `#[repr(align(4))]` type, so the data itself is aligned, and makes the typed handle from that static. DMA and the halfword and word copies to VRAM need aligned sources.
 - [ ] Frame comparisons against goldens.
 - [ ] A small game in `gba/examples/` (Breakout or similar) with sprites, a background, text and input, to try the API out while it is still cheap to change.
 
